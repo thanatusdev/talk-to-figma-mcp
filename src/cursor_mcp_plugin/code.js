@@ -3545,7 +3545,7 @@ async function setConstraints(params) {
     throw new Error(`Node does not support constraints: ${nodeId}`);
   }
 
-  const newConstraints = { ...node.constraints };
+  var newConstraints = Object.assign({}, node.constraints);
 
   if (horizontal !== undefined) {
     newConstraints.horizontal = horizontal;

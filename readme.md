@@ -13,13 +13,13 @@ The easiest way to use Talk to Figma MCP is via npx/bunx - no need to clone the 
 In one terminal, run:
 
 ```bash
-npx talk-to-figma-mcp@latest --socket
+npx talk-to-figma-mcp-tool --socket
 ```
 
 Or with Bun:
 
 ```bash
-bunx talk-to-figma-mcp@latest --socket
+bunx talk-to-figma-mcp-tool --socket
 ```
 
 ### 2. Configure Your Editor
@@ -33,7 +33,7 @@ Add the MCP server to your editor's configuration:
   "mcpServers": {
     "TalkToFigma": {
       "command": "npx",
-      "args": ["-y", "talk-to-figma-mcp@latest"]
+      "args": ["-y", "talk-to-figma-mcp-tool"]
     }
   }
 }
@@ -46,7 +46,7 @@ Add the MCP server to your editor's configuration:
   "mcpServers": {
     "TalkToFigma": {
       "command": "npx",
-      "args": ["-y", "talk-to-figma-mcp@latest"]
+      "args": ["-y", "talk-to-figma-mcp-tool"]
     }
   }
 }
@@ -59,7 +59,7 @@ Add the MCP server to your editor's configuration:
   "mcpServers": {
     "TalkToFigma": {
       "command": "npx",
-      "args": ["-y", "talk-to-figma-mcp@latest"]
+      "args": ["-y", "talk-to-figma-mcp-tool"]
     }
   }
 }
@@ -72,7 +72,7 @@ Add the MCP server to your editor's configuration:
   "context_servers": {
     "TalkToFigma": {
       "command": "npx",
-      "args": ["-y", "talk-to-figma-mcp@latest"]
+      "args": ["-y", "talk-to-figma-mcp-tool"]
     }
   }
 }
@@ -80,14 +80,33 @@ Add the MCP server to your editor's configuration:
 
 ### 3. Install the Figma Plugin
 
-1. Download the plugin files from the `src/cursor_mcp_plugin/` folder in this repository
-2. In Figma, go to **Plugins > Development > Import plugin from manifest...**
-3. Select the `manifest.json` file from the downloaded folder
-4. The plugin will appear in your Figma plugins menu
+**Option A: Use the CLI to find the plugin path (Easiest)**
+
+```bash
+npx talk-to-figma-mcp-tool --plugin
+```
+
+This will show you the exact path to the plugin files on your system.
+
+**Option B: Download from GitHub**
+
+```bash
+# Using curl to download just the plugin files
+mkdir figma-mcp-plugin && cd figma-mcp-plugin
+curl -O https://raw.githubusercontent.com/thanatusdev/talk-to-figma-mcp/main/src/cursor_mcp_plugin/manifest.json
+curl -O https://raw.githubusercontent.com/thanatusdev/talk-to-figma-mcp/main/src/cursor_mcp_plugin/code.js
+curl -O https://raw.githubusercontent.com/thanatusdev/talk-to-figma-mcp/main/src/cursor_mcp_plugin/ui.html
+```
+
+**Import into Figma:**
+
+1. In Figma, go to **Plugins > Development > Import plugin from manifest...**
+2. Select the `manifest.json` file from the plugin folder
+3. The plugin "Talk to Figma MCP" will appear in your plugins menu
 
 ### 4. Connect and Use
 
-1. Open Figma and run the "Cursor MCP Plugin" from the plugins menu
+1. Open Figma and run the "Talk to Figma MCP" plugin from the plugins menu
 2. The plugin will show a channel name - copy it
 3. In your AI editor, use the `join_channel` tool with the channel name
 4. Start designing with AI!
@@ -156,7 +175,7 @@ powershell -c "irm bun.sh/install.ps1|iex"
 
 ```bash
 export FIGMA_WS_HOST=0.0.0.0
-npx talk-to-figma-mcp@latest --socket
+npx talk-to-figma-mcp-tool --socket
 ```
 
 ## Environment Variables

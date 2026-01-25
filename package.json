@@ -1,11 +1,11 @@
 {
-  "name": "talk-to-figma-mcp",
+  "name": "talk-to-figma-mcp-tool",
   "description": "Talk to Figma MCP - AI-powered Figma integration for Cursor, Claude, and other MCP-compatible editors",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "module": "dist/server.js",
   "main": "dist/server.js",
   "bin": {
-    "talk-to-figma-mcp": "dist/cli.js"
+    "talk-to-figma-mcp-tool": "dist/cli.js"
   },
   "files": [
     "dist",
