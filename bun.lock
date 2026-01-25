@@ -1,16 +1,18 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "cursor-talk-to-figma-mcp",
       "dependencies": {
         "@modelcontextprotocol/sdk": "latest",
         "uuid": "latest",
-        "ws": "latest",
+        "ws": "^8.16.0",
         "zod": "latest",
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/ws": "^8.5.10",
         "bun-types": "^1.2.5",
         "tsup": "^8.4.0",
         "typescript": "^5.0.0",

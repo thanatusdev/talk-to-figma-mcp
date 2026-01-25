@@ -192,7 +192,7 @@
       <div id="content-connection" class="tab-content active">
         <div class="section">
           <label for="port">WebSocket Server Port</label>
-          <div style="display: flex; gap: 8px">
+          <div style="display: flex; gap: 8px; align-items: flex-start">
             <input
               type="number"
               id="port"
@@ -200,8 +200,9 @@
               value="3055"
               min="1024"
               max="65535"
+              style="margin-bottom: 0"
             />
-            <button id="btn-connect" class="primary">Connect</button>
+            <button id="btn-connect" class="primary" style="margin-top: 0; white-space: nowrap">Connect</button>
           </div>
         </div>
 
@@ -330,7 +331,8 @@
 
               if (data.type === "system") {
                 // Successfully joined channel
-                if (data.message && data.message.result) {
+                const isJoinedMessage = typeof data.message === 'string' && data.message.includes('Joined channel');
+                if ((data.message && data.message.result) || isJoinedMessage) {
                   state.connected = true;
                   const channelName = data.channel;
                   updateConnectionStatus(

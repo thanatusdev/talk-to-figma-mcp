@@ -1,12 +1,8 @@
-#!/usr/bin/env node
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
-
-import path from "path";
+import WebSocket from "ws";
+import { z } from "zod";
 
 // Define TypeScript interfaces for Figma responses
 interface FigmaResponse {
@@ -17,10 +13,10 @@ interface FigmaResponse {
 
 // Define interface for command progress updates
 interface CommandProgressUpdate {
-  type: 'command_progress';
+  type: "command_progress";
   commandId: string;
   commandType: string;
-  status: 'started' | 'in_progress' | 'completed' | 'error';
+  status: "started" | "in_progress" | "completed" | "error";
   progress: number;
   totalItems: number;
   processedItems: number;
@@ -38,20 +34,36 @@ const logger = {
   debug: (message: string) => process.stderr.write(`[DEBUG] ${message}\n`),
   warn: (message: string) => process.stderr.write(`[WARN] ${message}\n`),
   error: (message: string) => process.stderr.write(`[ERROR] ${message}\n`),
-  log: (message: string) => process.stderr.write(`[LOG] ${message}\n`)
+  log: (message: string) => process.stderr.write(`[LOG] ${message}\n`),
 };
 
 // WebSocket connection and request tracking
 let ws: WebSocket | null = null;
-const pendingRequests = new Map<string, {
-  resolve: (value: unknown) => void;
-  reject: (reason: unknown) => void;
-  timeout: ReturnType<typeof setTimeout>;
-  lastActivity: number; // Add timestamp for last activity
-}>();
+const pendingRequests = new Map<
+  string,
+  {
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
+    timeout: ReturnType<typeof setTimeout>;
+    lastActivity: number;
+  }
+>();
 
 // Track which channel each client is in
 let currentChannel: string | null = null;
+
+// Reconnection state with exponential backoff
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000;
+const BASE_RECONNECT_DELAY = 1000;
+
+function getReconnectDelay(): number {
+  const delay = Math.min(
+    BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts),
+    MAX_RECONNECT_DELAY,
+  );
+  return delay + Math.random() * 1000;
+}
 
 // Create MCP server
 const server = new McpServer({
@@ -61,9 +73,10 @@ const server = new McpServer({
 
 // Add command line argument parsing
 const args = process.argv.slice(2);
-const serverArg = args.find(arg => arg.startsWith('--server='));
-const serverUrl = serverArg ? serverArg.split('=')[1] : 'localhost';
-const WS_URL = serverUrl === 'localhost' ? `ws://${serverUrl}` : `wss://${serverUrl}`;
+const serverArg = args.find((arg) => arg.startsWith("--server="));
+const serverUrl = serverArg ? serverArg.split("=")[1] : "localhost";
+const WS_URL =
+  serverUrl === "localhost" ? `ws://${serverUrl}` : `wss://${serverUrl}`;
 
 // Document Info Tool
 server.tool(
@@ -74,25 +87,19 @@ server.tool(
     try {
       const result = await sendCommandToFigma("get_document_info");
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting document info: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting document info: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Selection Tool
@@ -104,25 +111,19 @@ server.tool(
     try {
       const result = await sendCommandToFigma("get_selection");
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting selection: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting selection: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Read My Design Tool
@@ -134,25 +135,19 @@ server.tool(
     try {
       const result = await sendCommandToFigma("read_my_design", {});
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting node info: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting node info: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Node Info Tool
@@ -167,42 +162,34 @@ server.tool(
       const result = await sendCommandToFigma("get_node_info", { nodeId });
       return {
         content: [
-          {
-            type: "text",
-            text: JSON.stringify(filterFigmaNode(result))
-          }
-        ]
+          { type: "text", text: JSON.stringify(filterFigmaNode(result)) },
+        ],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting node info: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting node info: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 function rgbaToHex(color: any): string {
-  // skip if color is already hex
-  if (color.startsWith('#')) {
+  if (color.startsWith("#")) {
     return color;
   }
-
   const r = Math.round(color.r * 255);
   const g = Math.round(color.g * 255);
   const b = Math.round(color.b * 255);
   const a = Math.round(color.a * 255);
-
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}${a === 255 ? '' : a.toString(16).padStart(2, '0')}`;
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}${a === 255 ? "" : a.toString(16).padStart(2, "0")}`;
 }
 
 function filterFigmaNode(node: any) {
-  // Skip VECTOR type nodes
   if (node.type === "VECTOR") {
     return null;
   }
@@ -216,30 +203,23 @@ function filterFigmaNode(node: any) {
   if (node.fills && node.fills.length > 0) {
     filtered.fills = node.fills.map((fill: any) => {
       const processedFill = { ...fill };
-
-      // Remove boundVariables and imageRef
       delete processedFill.boundVariables;
       delete processedFill.imageRef;
-
-      // Process gradientStops if present
       if (processedFill.gradientStops) {
-        processedFill.gradientStops = processedFill.gradientStops.map((stop: any) => {
-          const processedStop = { ...stop };
-          // Convert color to hex if present
-          if (processedStop.color) {
-            processedStop.color = rgbaToHex(processedStop.color);
-          }
-          // Remove boundVariables
-          delete processedStop.boundVariables;
-          return processedStop;
-        });
+        processedFill.gradientStops = processedFill.gradientStops.map(
+          (stop: any) => {
+            const processedStop = { ...stop };
+            if (processedStop.color) {
+              processedStop.color = rgbaToHex(processedStop.color);
+            }
+            delete processedStop.boundVariables;
+            return processedStop;
+          },
+        );
       }
-
-      // Convert solid fill colors to hex
       if (processedFill.color) {
         processedFill.color = rgbaToHex(processedFill.color);
       }
-
       return processedFill;
     });
   }
@@ -247,9 +227,7 @@ function filterFigmaNode(node: any) {
   if (node.strokes && node.strokes.length > 0) {
     filtered.strokes = node.strokes.map((stroke: any) => {
       const processedStroke = { ...stroke };
-      // Remove boundVariables
       delete processedStroke.boundVariables;
-      // Convert color to hex if present
       if (processedStroke.color) {
         processedStroke.color = rgbaToHex(processedStroke.color);
       }
@@ -260,15 +238,12 @@ function filterFigmaNode(node: any) {
   if (node.cornerRadius !== undefined) {
     filtered.cornerRadius = node.cornerRadius;
   }
-
   if (node.absoluteBoundingBox) {
     filtered.absoluteBoundingBox = node.absoluteBoundingBox;
   }
-
   if (node.characters) {
     filtered.characters = node.characters;
   }
-
   if (node.style) {
     filtered.style = {
       fontFamily: node.style.fontFamily,
@@ -277,16 +252,14 @@ function filterFigmaNode(node: any) {
       fontSize: node.style.fontSize,
       textAlignHorizontal: node.style.textAlignHorizontal,
       letterSpacing: node.style.letterSpacing,
-      lineHeightPx: node.style.lineHeightPx
+      lineHeightPx: node.style.lineHeightPx,
     };
   }
-
   if (node.children) {
     filtered.children = node.children
       .map((child: any) => filterFigmaNode(child))
-      .filter((child: any) => child !== null); // Remove null children (VECTOR nodes)
+      .filter((child: any) => child !== null);
   }
-
   return filtered;
 }
 
@@ -295,35 +268,39 @@ server.tool(
   "get_nodes_info",
   "Get detailed information about multiple nodes in Figma",
   {
-    nodeIds: z.array(z.string()).describe("Array of node IDs to get information about")
+    nodeIds: z
+      .array(z.string())
+      .describe("Array of node IDs to get information about"),
   },
   async ({ nodeIds }) => {
     try {
       const results = await Promise.all(
         nodeIds.map(async (nodeId) => {
-          const result = await sendCommandToFigma('get_node_info', { nodeId });
+          const result = await sendCommandToFigma("get_node_info", { nodeId });
           return { nodeId, info: result };
-        })
+        }),
       );
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(results.map((result) => filterFigmaNode(result.info)))
-          }
-        ]
+            text: JSON.stringify(
+              results.map((result) => filterFigmaNode(result.info)),
+            ),
+          },
+        ],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting nodes info: ${error instanceof Error ? error.message : String(error)}`
-          }
-        ]
+            text: `Error getting nodes info: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // Create Rectangle Tool
@@ -364,13 +341,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error creating rectangle: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error creating rectangle: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Create Frame Tool
@@ -437,8 +413,8 @@ server.tool(
         name: name || "Frame",
         parentId,
         fillColor: fillColor || { r: 1, g: 1, b: 1, a: 1 },
-        strokeColor: strokeColor,
-        strokeWeight: strokeWeight,
+        strokeColor,
+        strokeWeight,
       });
       const typedResult = result as { name: string; id: string };
       return {
@@ -454,13 +430,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error creating frame: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error creating frame: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Create Text Tool
@@ -525,13 +500,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error creating text: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error creating text: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Set Fill Color Tool
@@ -556,8 +530,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Set fill color of node "${typedResult.name
-              }" to RGBA(${r}, ${g}, ${b}, ${a || 1})`,
+            text: `Set fill color of node "${typedResult.name}" to RGBA(${r}, ${g}, ${b}, ${a || 1})`,
           },
         ],
       };
@@ -566,13 +539,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting fill color: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting fill color: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Set Stroke Color Tool
@@ -599,8 +571,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Set stroke color of node "${typedResult.name
-              }" to RGBA(${r}, ${g}, ${b}, ${a || 1}) with weight ${weight || 1}`,
+            text: `Set stroke color of node "${typedResult.name}" to RGBA(${r}, ${g}, ${b}, ${a || 1}) with weight ${weight || 1}`,
           },
         ],
       };
@@ -609,13 +580,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting stroke color: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting stroke color: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Move Node Tool
@@ -644,13 +614,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error moving node: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error moving node: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Clone Node Tool
@@ -660,31 +629,31 @@ server.tool(
   {
     nodeId: z.string().describe("The ID of the node to clone"),
     x: z.number().optional().describe("New X position for the clone"),
-    y: z.number().optional().describe("New Y position for the clone")
+    y: z.number().optional().describe("New Y position for the clone"),
   },
   async ({ nodeId, x, y }) => {
     try {
-      const result = await sendCommandToFigma('clone_node', { nodeId, x, y });
-      const typedResult = result as { name: string, id: string };
+      const result = await sendCommandToFigma("clone_node", { nodeId, x, y });
+      const typedResult = result as { name: string; id: string };
       return {
         content: [
           {
             type: "text",
-            text: `Cloned node "${typedResult.name}" with new ID: ${typedResult.id}${x !== undefined && y !== undefined ? ` at position (${x}, ${y})` : ''}`
-          }
-        ]
+            text: `Cloned node "${typedResult.name}" with new ID: ${typedResult.id}${x !== undefined && y !== undefined ? ` at position (${x}, ${y})` : ""}`,
+          },
+        ],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error cloning node: ${error instanceof Error ? error.message : String(error)}`
-          }
-        ]
+            text: `Error cloning node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // Resize Node Tool
@@ -717,13 +686,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error resizing node: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error resizing node: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Delete Node Tool
@@ -737,25 +705,19 @@ server.tool(
     try {
       await sendCommandToFigma("delete_node", { nodeId });
       return {
-        content: [
-          {
-            type: "text",
-            text: `Deleted node with ID: ${nodeId}`,
-          },
-        ],
+        content: [{ type: "text", text: `Deleted node with ID: ${nodeId}` }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error deleting node: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error deleting node: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Delete Multiple Nodes Tool
@@ -767,27 +729,23 @@ server.tool(
   },
   async ({ nodeIds }) => {
     try {
-      const result = await sendCommandToFigma("delete_multiple_nodes", { nodeIds });
+      const result = await sendCommandToFigma("delete_multiple_nodes", {
+        nodeIds,
+      });
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error deleting multiple nodes: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error deleting multiple nodes: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Export Node as Image Tool
@@ -810,7 +768,6 @@ server.tool(
         scale: scale || 1,
       });
       const typedResult = result as { imageData: string; mimeType: string };
-
       return {
         content: [
           {
@@ -825,13 +782,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error exporting node as image: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error exporting node as image: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Set Text Content Tool
@@ -862,13 +818,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting text content: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting text content: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Get Styles Tool
@@ -880,25 +835,19 @@ server.tool(
     try {
       const result = await sendCommandToFigma("get_styles");
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting styles: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting styles: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Get Local Components Tool
@@ -910,25 +859,19 @@ server.tool(
     try {
       const result = await sendCommandToFigma("get_local_components");
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting local components: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error getting local components: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Get Annotations Tool
@@ -936,34 +879,36 @@ server.tool(
   "get_annotations",
   "Get all annotations in the current document or specific node",
   {
-    nodeId: z.string().optional().describe("Optional node ID to get annotations for specific node"),
-    includeCategories: z.boolean().optional().default(true).describe("Whether to include category information")
+    nodeId: z
+      .string()
+      .optional()
+      .describe("Optional node ID to get annotations for specific node"),
+    includeCategories: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Whether to include category information"),
   },
   async ({ nodeId, includeCategories }) => {
     try {
       const result = await sendCommandToFigma("get_annotations", {
         nodeId,
-        includeCategories
+        includeCategories,
       });
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error getting annotations: ${error instanceof Error ? error.message : String(error)}`
-          }
-        ]
+            text: `Error getting annotations: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 // Set Annotation Tool
@@ -972,12 +917,23 @@ server.tool(
   "Create or update an annotation",
   {
     nodeId: z.string().describe("The ID of the node to annotate"),
-    annotationId: z.string().optional().describe("The ID of the annotation to update (if updating existing annotation)"),
-    labelMarkdown: z.string().describe("The annotation text in markdown format"),
-    categoryId: z.string().optional().describe("The ID of the annotation category"),
-    properties: z.array(z.object({
-      type: z.string()
-    })).optional().describe("Additional properties for the annotation")
+    annotationId: z
+      .string()
+      .optional()
+      .describe(
+        "The ID of the annotation to update (if updating existing annotation)",
+      ),
+    labelMarkdown: z
+      .string()
+      .describe("The annotation text in markdown format"),
+    categoryId: z
+      .string()
+      .optional()
+      .describe("The ID of the annotation category"),
+    properties: z
+      .array(z.object({ type: z.string() }))
+      .optional()
+      .describe("Additional properties for the annotation"),
   },
   async ({ nodeId, annotationId, labelMarkdown, categoryId, properties }) => {
     try {
@@ -986,27 +942,22 @@ server.tool(
         annotationId,
         labelMarkdown,
         categoryId,
-        properties
+        properties,
       });
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result)
-          }
-        ]
+        content: [{ type: "text", text: JSON.stringify(result) }],
       };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error setting annotation: ${error instanceof Error ? error.message : String(error)}`
-          }
-        ]
+            text: `Error setting annotation: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
       };
     }
-  }
+  },
 );
 
 interface SetMultipleAnnotationsParams {
@@ -1032,46 +983,43 @@ server.tool(
       .array(
         z.object({
           nodeId: z.string().describe("The ID of the node to annotate"),
-          labelMarkdown: z.string().describe("The annotation text in markdown format"),
-          categoryId: z.string().optional().describe("The ID of the annotation category"),
-          annotationId: z.string().optional().describe("The ID of the annotation to update (if updating existing annotation)"),
-          properties: z.array(z.object({
-            type: z.string()
-          })).optional().describe("Additional properties for the annotation")
-        })
+          labelMarkdown: z
+            .string()
+            .describe("The annotation text in markdown format"),
+          categoryId: z
+            .string()
+            .optional()
+            .describe("The ID of the annotation category"),
+          annotationId: z
+            .string()
+            .optional()
+            .describe(
+              "The ID of the annotation to update (if updating existing annotation)",
+            ),
+          properties: z
+            .array(z.object({ type: z.string() }))
+            .optional()
+            .describe("Additional properties for the annotation"),
+        }),
       )
       .describe("Array of annotations to apply"),
   },
-  async ({ nodeId, annotations }, extra) => {
+  async ({ nodeId, annotations }) => {
     try {
       if (!annotations || annotations.length === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "No annotations provided",
-            },
-          ],
-        };
+        return { content: [{ type: "text", text: "No annotations provided" }] };
       }
 
-      // Initial response to indicate we're starting the process
       const initialStatus = {
         type: "text" as const,
         text: `Starting annotation process for ${annotations.length} nodes. This will be processed in batches of 5...`,
       };
 
-      // Track overall progress
-      let totalProcessed = 0;
-      const totalToProcess = annotations.length;
-
-      // Use the plugin's set_multiple_annotations function with chunking
       const result = await sendCommandToFigma("set_multiple_annotations", {
         nodeId,
         annotations,
       });
 
-      // Cast the result to a specific type to work with it safely
       interface AnnotationResult {
         success: boolean;
         nodeId: string;
@@ -1088,35 +1036,26 @@ server.tool(
       }
 
       const typedResult = result as AnnotationResult;
-
-      // Format the results for display
-      const success = typedResult.annotationsApplied && typedResult.annotationsApplied > 0;
       const progressText = `
       Annotation process completed:
-      - ${typedResult.annotationsApplied || 0} of ${totalToProcess} successfully applied
+      - ${typedResult.annotationsApplied || 0} of ${annotations.length} successfully applied
       - ${typedResult.annotationsFailed || 0} failed
       - Processed in ${typedResult.completedInChunks || 1} batches
       `;
 
-      // Detailed results
       const detailedResults = typedResult.results || [];
-      const failedResults = detailedResults.filter(item => !item.success);
-
-      // Create the detailed part of the response
+      const failedResults = detailedResults.filter((item) => !item.success);
       let detailedResponse = "";
       if (failedResults.length > 0) {
-        detailedResponse = `\n\nNodes that failed:\n${failedResults.map(item =>
-          `- ${item.nodeId}: ${item.error || "Unknown error"}`
-        ).join('\n')}`;
+        detailedResponse = `\n\nNodes that failed:\n${failedResults
+          .map((item) => `- ${item.nodeId}: ${item.error || "Unknown error"}`)
+          .join("\n")}`;
       }
 
       return {
         content: [
           initialStatus,
-          {
-            type: "text" as const,
-            text: progressText + detailedResponse,
-          },
+          { type: "text" as const, text: progressText + detailedResponse },
         ],
       };
     } catch (error) {
@@ -1124,13 +1063,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting multiple annotations: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting multiple annotations: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Create Component Instance Tool
@@ -1149,27 +1087,20 @@ server.tool(
         x,
         y,
       });
-      const typedResult = result as any;
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(typedResult),
-          }
-        ]
-      }
+        content: [{ type: "text", text: JSON.stringify(result) }],
+      };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error creating component instance: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error creating component instance: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Set Corner Radius Tool
@@ -1184,7 +1115,7 @@ server.tool(
       .length(4)
       .optional()
       .describe(
-        "Optional array of 4 booleans to specify which corners to round [topLeft, topRight, bottomRight, bottomLeft]"
+        "Optional array of 4 booleans to specify which corners to round [topLeft, topRight, bottomRight, bottomLeft]",
       ),
   },
   async ({ nodeId, radius, corners }) => {
@@ -1208,125 +1139,851 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting corner radius: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting corner radius: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
-// Define design strategy prompt
-server.prompt(
-  "design_strategy",
-  "Best practices for working with Figma designs",
-  (extra) => {
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
+// Set Auto Layout Tool
+server.tool(
+  "set_auto_layout",
+  "Configure auto-layout properties on a frame in Figma",
+  {
+    nodeId: z.string().describe("The ID of the frame to modify"),
+    mode: z
+      .enum(["NONE", "HORIZONTAL", "VERTICAL"])
+      .optional()
+      .describe("Layout direction"),
+    layoutWrap: z
+      .enum(["NO_WRAP", "WRAP"])
+      .optional()
+      .describe("Wrap behavior for auto-layout"),
+    paddingTop: z.number().min(0).optional().describe("Top padding"),
+    paddingRight: z.number().min(0).optional().describe("Right padding"),
+    paddingBottom: z.number().min(0).optional().describe("Bottom padding"),
+    paddingLeft: z.number().min(0).optional().describe("Left padding"),
+    itemSpacing: z.number().min(0).optional().describe("Spacing between items"),
+    counterAxisSpacing: z
+      .number()
+      .min(0)
+      .optional()
+      .describe("Spacing between wrapped rows/columns"),
+    primaryAxisAlignItems: z
+      .enum(["MIN", "CENTER", "MAX", "SPACE_BETWEEN"])
+      .optional()
+      .describe("Primary axis alignment"),
+    counterAxisAlignItems: z
+      .enum(["MIN", "CENTER", "MAX", "BASELINE"])
+      .optional()
+      .describe("Counter axis alignment"),
+  },
+  async (params) => {
+    try {
+      const result = await sendCommandToFigma("set_auto_layout", params);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
             type: "text",
-            text: `When working with Figma designs, follow these best practices:
-
-1. Start with Document Structure:
-   - First use get_document_info() to understand the current document
-   - Plan your layout hierarchy before creating elements
-   - Create a main container frame for each screen/section
-
-2. Naming Conventions:
-   - Use descriptive, semantic names for all elements
-   - Follow a consistent naming pattern (e.g., "Login Screen", "Logo Container", "Email Input")
-   - Group related elements with meaningful names
-
-3. Layout Hierarchy:
-   - Create parent frames first, then add child elements
-   - For forms/login screens:
-     * Start with the main screen container frame
-     * Create a logo container at the top
-     * Group input fields in their own containers
-     * Place action buttons (login, submit) after inputs
-     * Add secondary elements (forgot password, signup links) last
-
-4. Input Fields Structure:
-   - Create a container frame for each input field
-   - Include a label text above or inside the input
-   - Group related inputs (e.g., username/password) together
-
-5. Element Creation:
-   - Use create_frame() for containers and input fields
-   - Use create_text() for labels, buttons text, and links
-   - Set appropriate colors and styles:
-     * Use fillColor for backgrounds
-     * Use strokeColor for borders
-     * Set proper fontWeight for different text elements
-
-6. Mofifying existing elements:
-  - use set_text_content() to modify text content.
-
-7. Visual Hierarchy:
-   - Position elements in logical reading order (top to bottom)
-   - Maintain consistent spacing between elements
-   - Use appropriate font sizes for different text types:
-     * Larger for headings/welcome text
-     * Medium for input labels
-     * Standard for button text
-     * Smaller for helper text/links
-
-8. Best Practices:
-   - Verify each creation with get_node_info()
-   - Use parentId to maintain proper hierarchy
-   - Group related elements together in frames
-   - Keep consistent spacing and alignment
-
-Example Login Screen Structure:
-- Login Screen (main frame)
-  - Logo Container (frame)
-    - Logo (image/text)
-  - Welcome Text (text)
-  - Input Container (frame)
-    - Email Input (frame)
-      - Email Label (text)
-      - Email Field (frame)
-    - Password Input (frame)
-      - Password Label (text)
-      - Password Field (frame)
-  - Login Button (frame)
-    - Button Text (text)
-  - Helper Links (frame)
-    - Forgot Password (text)
-    - Don't have account (text)`,
+            text: `Error setting auto-layout: ${error instanceof Error ? error.message : String(error)}`,
           },
-        },
-      ],
-      description: "Best practices for working with Figma designs",
-    };
-  }
+        ],
+      };
+    }
+  },
 );
 
-server.prompt(
-  "read_design_strategy",
-  "Best practices for reading Figma designs",
-  (extra) => {
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
+// Set Effects Tool
+server.tool(
+  "set_effects",
+  "Apply visual effects (shadows, blur) to a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    effects: z
+      .array(
+        z.object({
+          type: z
+            .enum([
+              "DROP_SHADOW",
+              "INNER_SHADOW",
+              "LAYER_BLUR",
+              "BACKGROUND_BLUR",
+            ])
+            .describe("Effect type"),
+          visible: z.boolean().optional().describe("Whether effect is visible"),
+          radius: z.number().min(0).optional().describe("Blur radius"),
+          color: z
+            .object({
+              r: z.number().min(0).max(1),
+              g: z.number().min(0).max(1),
+              b: z.number().min(0).max(1),
+              a: z.number().min(0).max(1),
+            })
+            .optional()
+            .describe("Shadow color (RGBA)"),
+          offset: z
+            .object({ x: z.number(), y: z.number() })
+            .optional()
+            .describe("Shadow offset"),
+          spread: z.number().optional().describe("Shadow spread"),
+          blendMode: z.string().optional().describe("Blend mode"),
+        }),
+      )
+      .describe("Array of effects to apply"),
+  },
+  async ({ nodeId, effects }) => {
+    try {
+      const result = await sendCommandToFigma("set_effects", {
+        nodeId,
+        effects,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
             type: "text",
-            text: `When reading Figma designs, follow these best practices:
-
-1. Start with selection:
-   - First use read_my_design() to understand the current selection
-   - If no selection ask user to select single or multiple nodes
-`,
+            text: `Error setting effects: ${error instanceof Error ? error.message : String(error)}`,
           },
-        },
-      ],
-      description: "Best practices for reading Figma designs",
-    };
-  }
+        ],
+      };
+    }
+  },
+);
+
+// Group Nodes Tool
+server.tool(
+  "group_nodes",
+  "Group multiple nodes together in Figma",
+  {
+    nodeIds: z.array(z.string()).describe("Array of node IDs to group"),
+    name: z.string().optional().describe("Name for the new group"),
+  },
+  async ({ nodeIds, name }) => {
+    try {
+      const result = await sendCommandToFigma("group_nodes", { nodeIds, name });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error grouping nodes: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Ungroup Nodes Tool
+server.tool(
+  "ungroup_nodes",
+  "Ungroup a group node, moving its children to the parent",
+  {
+    nodeId: z.string().describe("The ID of the group to ungroup"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("ungroup_nodes", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error ungrouping nodes: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Flatten Node Tool
+server.tool(
+  "flatten_node",
+  "Flatten a node to a single vector (like Outline Stroke)",
+  {
+    nodeId: z.string().describe("The ID of the node to flatten"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("flatten_node", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error flattening node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Insert Child Tool
+server.tool(
+  "insert_child",
+  "Move a node into a parent container at a specific index",
+  {
+    parentId: z.string().describe("The ID of the parent node"),
+    childId: z.string().describe("The ID of the child node to insert"),
+    index: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Index to insert at (appends if not specified)"),
+  },
+  async ({ parentId, childId, index }) => {
+    try {
+      const result = await sendCommandToFigma("insert_child", {
+        parentId,
+        childId,
+        index,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error inserting child: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// ==================== NEW IMPROVEMENT TOOLS ====================
+
+// Set Opacity Tool
+server.tool(
+  "set_opacity",
+  "Set the opacity of a node in Figma (0-1)",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    opacity: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe(
+        "Opacity value (0-1, where 0 is fully transparent and 1 is fully opaque)",
+      ),
+  },
+  async ({ nodeId, opacity }) => {
+    try {
+      const result = await sendCommandToFigma("set_opacity", {
+        nodeId,
+        opacity,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting opacity: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Visibility Tool
+server.tool(
+  "set_visibility",
+  "Show or hide a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    visible: z.boolean().describe("Whether the node should be visible"),
+  },
+  async ({ nodeId, visible }) => {
+    try {
+      const result = await sendCommandToFigma("set_visibility", {
+        nodeId,
+        visible,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting visibility: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Rename Node Tool
+server.tool(
+  "rename_node",
+  "Rename a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node to rename"),
+    name: z.string().describe("The new name for the node"),
+  },
+  async ({ nodeId, name }) => {
+    try {
+      const result = await sendCommandToFigma("rename_node", { nodeId, name });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error renaming node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Lock Node Tool
+server.tool(
+  "set_locked",
+  "Lock or unlock a node to prevent/allow accidental edits",
+  {
+    nodeId: z.string().describe("The ID of the node to lock/unlock"),
+    locked: z.boolean().describe("Whether the node should be locked"),
+  },
+  async ({ nodeId, locked }) => {
+    try {
+      const result = await sendCommandToFigma("set_locked", { nodeId, locked });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting lock state: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Get All Colors Tool
+server.tool(
+  "get_all_colors",
+  "Extract all unique colors used in a node and its children (for design analysis)",
+  {
+    nodeId: z.string().describe("The ID of the node to analyze"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("get_all_colors", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting colors: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Get All Fonts Tool
+server.tool(
+  "get_all_fonts",
+  "Extract all fonts used in a node and its children (for typography audit)",
+  {
+    nodeId: z.string().describe("The ID of the node to analyze"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("get_all_fonts", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting fonts: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Node Exists Tool
+server.tool(
+  "node_exists",
+  "Check if a node exists in the Figma document (useful for validation before operations)",
+  {
+    nodeId: z.string().describe("The ID of the node to check"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("node_exists", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error checking node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Get Children Tool
+server.tool(
+  "get_children",
+  "Get all direct children of a node",
+  {
+    nodeId: z.string().describe("The ID of the parent node"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("get_children", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting children: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Find Nodes by Name Tool
+server.tool(
+  "find_nodes_by_name",
+  "Find nodes by name pattern within a parent node",
+  {
+    nodeId: z.string().describe("The ID of the parent node to search within"),
+    pattern: z
+      .string()
+      .describe("Name pattern to search for (supports * wildcard)"),
+    type: z
+      .string()
+      .optional()
+      .describe(
+        "Optional: filter by node type (e.g., 'TEXT', 'FRAME', 'COMPONENT')",
+      ),
+  },
+  async ({ nodeId, pattern, type }) => {
+    try {
+      const result = await sendCommandToFigma("find_nodes_by_name", {
+        nodeId,
+        pattern,
+        type,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error finding nodes: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Gradient Fill Tool
+server.tool(
+  "set_gradient_fill",
+  "Set a gradient fill on a node",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    gradientType: z
+      .enum(["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"])
+      .describe("Type of gradient"),
+    stops: z
+      .array(
+        z.object({
+          position: z
+            .number()
+            .min(0)
+            .max(1)
+            .describe("Position of the stop (0-1)"),
+          color: z
+            .object({
+              r: z.number().min(0).max(1).describe("Red component (0-1)"),
+              g: z.number().min(0).max(1).describe("Green component (0-1)"),
+              b: z.number().min(0).max(1).describe("Blue component (0-1)"),
+              a: z
+                .number()
+                .min(0)
+                .max(1)
+                .optional()
+                .describe("Alpha component (0-1)"),
+            })
+            .describe("Color at this stop"),
+        }),
+      )
+      .min(2)
+      .describe("Array of gradient stops (minimum 2)"),
+    angle: z
+      .number()
+      .optional()
+      .describe("Rotation angle in degrees (for linear gradients)"),
+  },
+  async ({ nodeId, gradientType, stops, angle }) => {
+    try {
+      const result = await sendCommandToFigma("set_gradient_fill", {
+        nodeId,
+        gradientType,
+        stops,
+        angle,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting gradient: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Text Style Tool
+server.tool(
+  "set_text_style",
+  "Set advanced text styling properties (line height, letter spacing, etc.)",
+  {
+    nodeId: z.string().describe("The ID of the text node to style"),
+    fontSize: z.number().positive().optional().describe("Font size in pixels"),
+    fontWeight: z.number().optional().describe("Font weight (100-900)"),
+    letterSpacing: z.number().optional().describe("Letter spacing in pixels"),
+    lineHeight: z
+      .union([
+        z.object({ value: z.number(), unit: z.enum(["PIXELS", "PERCENT"]) }),
+        z.literal("AUTO"),
+      ])
+      .optional()
+      .describe("Line height (AUTO, or {value, unit})"),
+    textAlignHorizontal: z
+      .enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"])
+      .optional()
+      .describe("Horizontal text alignment"),
+    textAlignVertical: z
+      .enum(["TOP", "CENTER", "BOTTOM"])
+      .optional()
+      .describe("Vertical text alignment"),
+    textDecoration: z
+      .enum(["NONE", "UNDERLINE", "STRIKETHROUGH"])
+      .optional()
+      .describe("Text decoration"),
+    textCase: z
+      .enum(["ORIGINAL", "UPPER", "LOWER", "TITLE"])
+      .optional()
+      .describe("Text case transformation"),
+  },
+  async ({ nodeId, ...styles }) => {
+    try {
+      const result = await sendCommandToFigma("set_text_style", {
+        nodeId,
+        ...styles,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting text style: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Constraints Tool
+server.tool(
+  "set_constraints",
+  "Set constraints for responsive behavior when parent is resized",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    horizontal: z
+      .enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"])
+      .optional()
+      .describe("Horizontal constraint (MIN=left, MAX=right)"),
+    vertical: z
+      .enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"])
+      .optional()
+      .describe("Vertical constraint (MIN=top, MAX=bottom)"),
+  },
+  async ({ nodeId, horizontal, vertical }) => {
+    try {
+      const result = await sendCommandToFigma("set_constraints", {
+        nodeId,
+        horizontal,
+        vertical,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting constraints: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Blend Mode Tool
+server.tool(
+  "set_blend_mode",
+  "Set the blend mode of a node",
+  {
+    nodeId: z.string().describe("The ID of the node to modify"),
+    blendMode: z
+      .enum([
+        "NORMAL",
+        "DARKEN",
+        "MULTIPLY",
+        "LINEAR_BURN",
+        "COLOR_BURN",
+        "LIGHTEN",
+        "SCREEN",
+        "LINEAR_DODGE",
+        "COLOR_DODGE",
+        "OVERLAY",
+        "SOFT_LIGHT",
+        "HARD_LIGHT",
+        "DIFFERENCE",
+        "EXCLUSION",
+        "HUE",
+        "SATURATION",
+        "COLOR",
+        "LUMINOSITY",
+      ])
+      .describe("The blend mode to apply"),
+  },
+  async ({ nodeId, blendMode }) => {
+    try {
+      const result = await sendCommandToFigma("set_blend_mode", {
+        nodeId,
+        blendMode,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting blend mode: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Create Ellipse Tool
+server.tool(
+  "create_ellipse",
+  "Create a new ellipse/circle in Figma",
+  {
+    x: z.number().describe("X position"),
+    y: z.number().describe("Y position"),
+    width: z.number().describe("Width of the ellipse"),
+    height: z
+      .number()
+      .describe("Height of the ellipse (same as width for circle)"),
+    name: z.string().optional().describe("Optional name for the ellipse"),
+    parentId: z.string().optional().describe("Optional parent node ID"),
+    fillColor: z
+      .object({
+        r: z.number().min(0).max(1),
+        g: z.number().min(0).max(1),
+        b: z.number().min(0).max(1),
+        a: z.number().min(0).max(1).optional(),
+      })
+      .optional()
+      .describe("Fill color in RGBA format"),
+  },
+  async ({ x, y, width, height, name, parentId, fillColor }) => {
+    try {
+      const result = await sendCommandToFigma("create_ellipse", {
+        x,
+        y,
+        width,
+        height,
+        name: name || "Ellipse",
+        parentId,
+        fillColor,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating ellipse: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Create Line Tool
+server.tool(
+  "create_line",
+  "Create a new line in Figma",
+  {
+    startX: z.number().describe("Starting X position"),
+    startY: z.number().describe("Starting Y position"),
+    endX: z.number().describe("Ending X position"),
+    endY: z.number().describe("Ending Y position"),
+    name: z.string().optional().describe("Optional name for the line"),
+    parentId: z.string().optional().describe("Optional parent node ID"),
+    strokeColor: z
+      .object({
+        r: z.number().min(0).max(1),
+        g: z.number().min(0).max(1),
+        b: z.number().min(0).max(1),
+        a: z.number().min(0).max(1).optional(),
+      })
+      .optional()
+      .describe("Stroke color in RGBA format"),
+    strokeWeight: z.number().positive().optional().describe("Stroke weight"),
+  },
+  async ({
+    startX,
+    startY,
+    endX,
+    endY,
+    name,
+    parentId,
+    strokeColor,
+    strokeWeight,
+  }) => {
+    try {
+      const result = await sendCommandToFigma("create_line", {
+        startX,
+        startY,
+        endX,
+        endY,
+        name: name || "Line",
+        parentId,
+        strokeColor,
+        strokeWeight: strokeWeight || 1,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating line: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Get Parent Tool
+server.tool(
+  "get_parent",
+  "Get the parent node of a given node",
+  {
+    nodeId: z.string().describe("The ID of the node to get parent of"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("get_parent", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting parent: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Set Selection Tool
+server.tool(
+  "set_selection",
+  "Set the current selection in Figma to specific nodes",
+  {
+    nodeIds: z.array(z.string()).describe("Array of node IDs to select"),
+  },
+  async ({ nodeIds }) => {
+    try {
+      const result = await sendCommandToFigma("set_selection", { nodeIds });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting selection: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
+// Scroll Into View Tool
+server.tool(
+  "scroll_into_view",
+  "Scroll the viewport to show a specific node",
+  {
+    nodeId: z.string().describe("The ID of the node to scroll to"),
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("scroll_into_view", { nodeId });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error scrolling to node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
 );
 
 // Text Node Scanning Tool
@@ -1338,27 +1995,24 @@ server.tool(
   },
   async ({ nodeId }) => {
     try {
-      // Initial response to indicate we're starting the process
       const initialStatus = {
         type: "text" as const,
         text: "Starting text node scanning. This may take a moment for large designs...",
       };
 
-      // Use the plugin's scan_text_nodes function with chunking flag
       const result = await sendCommandToFigma("scan_text_nodes", {
         nodeId,
-        useChunking: true,  // Enable chunking on the plugin side
-        chunkSize: 10       // Process 10 nodes at a time
+        useChunking: true,
+        chunkSize: 10,
       });
 
-      // If the result indicates chunking was used, format the response accordingly
-      if (result && typeof result === 'object' && 'chunks' in result) {
+      if (result && typeof result === "object" && "chunks" in result) {
         const typedResult = result as {
-          success: boolean,
-          totalNodes: number,
-          processedNodes: number,
-          chunks: number,
-          textNodes: Array<any>
+          success: boolean;
+          totalNodes: number;
+          processedNodes: number;
+          chunks: number;
+          textNodes: Array<any>;
         };
 
         const summaryText = `
@@ -1370,26 +2024,19 @@ server.tool(
         return {
           content: [
             initialStatus,
+            { type: "text" as const, text: summaryText },
             {
               type: "text" as const,
-              text: summaryText
+              text: JSON.stringify(typedResult.textNodes, null, 2),
             },
-            {
-              type: "text" as const,
-              text: JSON.stringify(typedResult.textNodes, null, 2)
-            }
           ],
         };
       }
 
-      // If chunking wasn't used or wasn't reported in the result format, return the result as is
       return {
         content: [
           initialStatus,
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
+          { type: "text", text: JSON.stringify(result, null, 2) },
         ],
       };
     } catch (error) {
@@ -1397,13 +2044,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error scanning text nodes: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error scanning text nodes: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
 // Node Type Scanning Tool
@@ -1412,66 +2058,53 @@ server.tool(
   "Scan for nodes with specific types in the selected Figma node",
   {
     nodeId: z.string().describe("ID of the node to scan"),
-    types: z.array(z.string()).describe("Array of node types to find (e.g. ['COMPONENT', 'FRAME'])")
+    types: z
+      .array(z.string())
+      .describe("Array of node types to find (e.g. ['COMPONENT', 'FRAME'])"),
   },
   async ({ nodeId, types }) => {
     try {
-      // Initial response to indicate we're starting the process
       const initialStatus = {
         type: "text" as const,
-        text: `Starting node type scanning for types: ${types.join(', ')}...`,
+        text: `Starting node type scanning for types: ${types.join(", ")}...`,
       };
 
-      // Use the plugin's scan_nodes_by_types function
       const result = await sendCommandToFigma("scan_nodes_by_types", {
         nodeId,
-        types
+        types,
       });
 
-      // Format the response
-      if (result && typeof result === 'object' && 'matchingNodes' in result) {
+      if (result && typeof result === "object" && "matchingNodes" in result) {
         const typedResult = result as {
-          success: boolean,
-          count: number,
+          success: boolean;
+          count: number;
           matchingNodes: Array<{
-            id: string,
-            name: string,
-            type: string,
-            bbox: {
-              x: number,
-              y: number,
-              width: number,
-              height: number
-            }
-          }>,
-          searchedTypes: Array<string>
+            id: string;
+            name: string;
+            type: string;
+            bbox: { x: number; y: number; width: number; height: number };
+          }>;
+          searchedTypes: Array<string>;
         };
 
-        const summaryText = `Scan completed: Found ${typedResult.count} nodes matching types: ${typedResult.searchedTypes.join(', ')}`;
+        const summaryText = `Scan completed: Found ${typedResult.count} nodes matching types: ${typedResult.searchedTypes.join(", ")}`;
 
         return {
           content: [
             initialStatus,
+            { type: "text" as const, text: summaryText },
             {
               type: "text" as const,
-              text: summaryText
+              text: JSON.stringify(typedResult.matchingNodes, null, 2),
             },
-            {
-              type: "text" as const,
-              text: JSON.stringify(typedResult.matchingNodes, null, 2)
-            }
           ],
         };
       }
 
-      // If the result is in an unexpected format, return it as is
       return {
         content: [
           initialStatus,
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
+          { type: "text", text: JSON.stringify(result, null, 2) },
         ],
       };
     } catch (error) {
@@ -1479,147 +2112,12 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error scanning nodes by types: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error scanning nodes by types: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
-);
-
-// Text Replacement Strategy Prompt
-server.prompt(
-  "text_replacement_strategy",
-  "Systematic approach for replacing text in Figma designs",
-  (extra) => {
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
-            type: "text",
-            text: `# Intelligent Text Replacement Strategy
-
-## 1. Analyze Design & Identify Structure
-- Scan text nodes to understand the overall structure of the design
-- Use AI pattern recognition to identify logical groupings:
-  * Tables (rows, columns, headers, cells)
-  * Lists (items, headers, nested lists)
-  * Card groups (similar cards with recurring text fields)
-  * Forms (labels, input fields, validation text)
-  * Navigation (menu items, breadcrumbs)
-\`\`\`
-scan_text_nodes(nodeId: "node-id")
-get_node_info(nodeId: "node-id")  // optional
-\`\`\`
-
-## 2. Strategic Chunking for Complex Designs
-- Divide replacement tasks into logical content chunks based on design structure
-- Use one of these chunking strategies that best fits the design:
-  * **Structural Chunking**: Table rows/columns, list sections, card groups
-  * **Spatial Chunking**: Top-to-bottom, left-to-right in screen areas
-  * **Semantic Chunking**: Content related to the same topic or functionality
-  * **Component-Based Chunking**: Process similar component instances together
-
-## 3. Progressive Replacement with Verification
-- Create a safe copy of the node for text replacement
-- Replace text chunk by chunk with continuous progress updates
-- After each chunk is processed:
-  * Export that section as a small, manageable image
-  * Verify text fits properly and maintain design integrity
-  * Fix issues before proceeding to the next chunk
-
-\`\`\`
-// Clone the node to create a safe copy
-clone_node(nodeId: "selected-node-id", x: [new-x], y: [new-y])
-
-// Replace text chunk by chunk
-set_multiple_text_contents(
-  nodeId: "parent-node-id", 
-  text: [
-    { nodeId: "node-id-1", text: "New text 1" },
-    // More nodes in this chunk...
-  ]
-)
-
-// Verify chunk with small, targeted image exports
-export_node_as_image(nodeId: "chunk-node-id", format: "PNG", scale: 0.5)
-\`\`\`
-
-## 4. Intelligent Handling for Table Data
-- For tabular content:
-  * Process one row or column at a time
-  * Maintain alignment and spacing between cells
-  * Consider conditional formatting based on cell content
-  * Preserve header/data relationships
-
-## 5. Smart Text Adaptation
-- Adaptively handle text based on container constraints:
-  * Auto-detect space constraints and adjust text length
-  * Apply line breaks at appropriate linguistic points
-  * Maintain text hierarchy and emphasis
-  * Consider font scaling for critical content that must fit
-
-## 6. Progressive Feedback Loop
-- Establish a continuous feedback loop during replacement:
-  * Real-time progress updates (0-100%)
-  * Small image exports after each chunk for verification
-  * Issues identified early and resolved incrementally
-  * Quick adjustments applied to subsequent chunks
-
-## 7. Final Verification & Context-Aware QA
-- After all chunks are processed:
-  * Export the entire design at reduced scale for final verification
-  * Check for cross-chunk consistency issues
-  * Verify proper text flow between different sections
-  * Ensure design harmony across the full composition
-
-## 8. Chunk-Specific Export Scale Guidelines
-- Scale exports appropriately based on chunk size:
-  * Small chunks (1-5 elements): scale 1.0
-  * Medium chunks (6-20 elements): scale 0.7
-  * Large chunks (21-50 elements): scale 0.5
-  * Very large chunks (50+ elements): scale 0.3
-  * Full design verification: scale 0.2
-
-## Sample Chunking Strategy for Common Design Types
-
-### Tables
-- Process by logical rows (5-10 rows per chunk)
-- Alternative: Process by column for columnar analysis
-- Tip: Always include header row in first chunk for reference
-
-### Card Lists
-- Group 3-5 similar cards per chunk
-- Process entire cards to maintain internal consistency
-- Verify text-to-image ratio within cards after each chunk
-
-### Forms
-- Group related fields (e.g., "Personal Information", "Payment Details")
-- Process labels and input fields together
-- Ensure validation messages and hints are updated with their fields
-
-### Navigation & Menus
-- Process hierarchical levels together (main menu, submenu)
-- Respect information architecture relationships
-- Verify menu fit and alignment after replacement
-
-## Best Practices
-- **Preserve Design Intent**: Always prioritize design integrity
-- **Structural Consistency**: Maintain alignment, spacing, and hierarchy
-- **Visual Feedback**: Verify each chunk visually before proceeding
-- **Incremental Improvement**: Learn from each chunk to improve subsequent ones
-- **Balance Automation & Control**: Let AI handle repetitive replacements but maintain oversight
-- **Respect Content Relationships**: Keep related content consistent across chunks
-
-Remember that text is never just text—it's a core design element that must work harmoniously with the overall composition. This chunk-based strategy allows you to methodically transform text while maintaining design integrity.`,
-          },
-        },
-      ],
-      description: "Systematic approach for replacing text in Figma designs",
-    };
-  }
+  },
 );
 
 // Set Multiple Text Contents Tool
@@ -1635,40 +2133,26 @@ server.tool(
         z.object({
           nodeId: z.string().describe("The ID of the text node"),
           text: z.string().describe("The replacement text"),
-        })
+        }),
       )
       .describe("Array of text node IDs and their replacement texts"),
   },
-  async ({ nodeId, text }, extra) => {
+  async ({ nodeId, text }) => {
     try {
       if (!text || text.length === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "No text provided",
-            },
-          ],
-        };
+        return { content: [{ type: "text", text: "No text provided" }] };
       }
 
-      // Initial response to indicate we're starting the process
       const initialStatus = {
         type: "text" as const,
         text: `Starting text replacement for ${text.length} nodes. This will be processed in batches of 5...`,
       };
 
-      // Track overall progress
-      let totalProcessed = 0;
-      const totalToProcess = text.length;
-
-      // Use the plugin's set_multiple_text_contents function with chunking
       const result = await sendCommandToFigma("set_multiple_text_contents", {
         nodeId,
         text,
       });
 
-      // Cast the result to a specific type to work with it safely
       interface TextReplaceResult {
         success: boolean;
         nodeId: string;
@@ -1686,35 +2170,26 @@ server.tool(
       }
 
       const typedResult = result as TextReplaceResult;
-
-      // Format the results for display
-      const success = typedResult.replacementsApplied && typedResult.replacementsApplied > 0;
       const progressText = `
       Text replacement completed:
-      - ${typedResult.replacementsApplied || 0} of ${totalToProcess} successfully updated
+      - ${typedResult.replacementsApplied || 0} of ${text.length} successfully updated
       - ${typedResult.replacementsFailed || 0} failed
       - Processed in ${typedResult.completedInChunks || 1} batches
       `;
 
-      // Detailed results
       const detailedResults = typedResult.results || [];
-      const failedResults = detailedResults.filter(item => !item.success);
-
-      // Create the detailed part of the response
+      const failedResults = detailedResults.filter((item) => !item.success);
       let detailedResponse = "";
       if (failedResults.length > 0) {
-        detailedResponse = `\n\nNodes that failed:\n${failedResults.map(item =>
-          `- ${item.nodeId}: ${item.error || "Unknown error"}`
-        ).join('\n')}`;
+        detailedResponse = `\n\nNodes that failed:\n${failedResults
+          .map((item) => `- ${item.nodeId}: ${item.error || "Unknown error"}`)
+          .join("\n")}`;
       }
 
       return {
         content: [
           initialStatus,
-          {
-            type: "text" as const,
-            text: progressText + detailedResponse,
-          },
+          { type: "text" as const, text: progressText + detailedResponse },
         ],
       };
     } catch (error) {
@@ -1722,174 +2197,55 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error setting multiple text contents: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error setting multiple text contents: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };
     }
-  }
+  },
 );
 
-// Annotation Conversion Strategy Prompt
-server.prompt(
-  "annotation_conversion_strategy",
-  "Strategy for converting manual annotations to Figma's native annotations",
-  (extra) => {
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
-            type: "text",
-            text: `# Automatic Annotation Conversion
-            
-## Process Overview
-
-The process of converting manual annotations (numbered/alphabetical indicators with connected descriptions) to Figma's native annotations:
-
-1. Get selected frame/component information
-2. Scan and collect all annotation text nodes
-3. Scan target UI elements (components, instances, frames)
-4. Match annotations to appropriate UI elements
-5. Apply native Figma annotations
-
-## Step 1: Get Selection and Initial Setup
-
-First, get the selected frame or component that contains annotations:
-
-\`\`\`typescript
-// Get the selected frame/component
-const selection = await get_selection();
-const selectedNodeId = selection[0].id
-
-// Get available annotation categories for later use
-const annotationData = await get_annotations({
-  nodeId: selectedNodeId,
-  includeCategories: true
-});
-const categories = annotationData.categories;
-\`\`\`
-
-## Step 2: Scan Annotation Text Nodes
-
-Scan all text nodes to identify annotations and their descriptions:
-
-\`\`\`typescript
-// Get all text nodes in the selection
-const textNodes = await scan_text_nodes({
-  nodeId: selectedNodeId
-});
-
-// Filter and group annotation markers and descriptions
-
-// Markers typically have these characteristics:
-// - Short text content (usually single digit/letter)
-// - Specific font styles (often bold)
-// - Located in a container with "Marker" or "Dot" in the name
-// - Have a clear naming pattern (e.g., "1", "2", "3" or "A", "B", "C")
-
-
-// Identify description nodes
-// Usually longer text nodes near markers or with matching numbers in path
-  
-\`\`\`
-
-## Step 3: Scan Target UI Elements
-
-Get all potential target elements that annotations might refer to:
-
-\`\`\`typescript
-// Scan for all UI elements that could be annotation targets
-const targetNodes = await scan_nodes_by_types({
-  nodeId: selectedNodeId,
-  types: [
-    "COMPONENT",
-    "INSTANCE",
-    "FRAME"
-  ]
-});
-\`\`\`
-
-## Step 4: Match Annotations to Targets
-
-Match each annotation to its target UI element using these strategies in order of priority:
-
-1. **Path-Based Matching**:
-   - Look at the marker's parent container name in the Figma layer hierarchy
-   - Remove any "Marker:" or "Annotation:" prefixes from the parent name
-   - Find UI elements that share the same parent name or have it in their path
-   - This works well when markers are grouped with their target elements
-
-2. **Name-Based Matching**:
-   - Extract key terms from the annotation description
-   - Look for UI elements whose names contain these key terms
-   - Consider both exact matches and semantic similarities
-   - Particularly effective for form fields, buttons, and labeled components
-
-3. **Proximity-Based Matching** (fallback):
-   - Calculate the center point of the marker
-   - Find the closest UI element by measuring distances to element centers
-   - Consider the marker's position relative to nearby elements
-   - Use this method when other matching strategies fail
-
-Additional Matching Considerations:
-- Give higher priority to matches found through path-based matching
-- Consider the type of UI element when evaluating matches
-- Take into account the annotation's context and content
-- Use a combination of strategies for more accurate matching
-
-## Step 5: Apply Native Annotations
-
-Convert matched annotations to Figma's native annotations using batch processing:
-
-\`\`\`typescript
-// Prepare annotations array for batch processing
-const annotationsToApply = Object.values(annotations).map(({ marker, description }) => {
-  // Find target using multiple strategies
-  const target = 
-    findTargetByPath(marker, targetNodes) ||
-    findTargetByName(description, targetNodes) ||
-    findTargetByProximity(marker, targetNodes);
-  
-  if (target) {
-    // Determine appropriate category based on content
-    const category = determineCategory(description.characters, categories);
-
-    // Determine appropriate additional annotationProperty based on content
-    const annotationProperty = determineProperties(description.characters, target.type);
-    
-    return {
-      nodeId: target.id,
-      labelMarkdown: description.characters,
-      categoryId: category.id,
-      properties: annotationProperty
-    };
-  }
-  return null;
-}).filter(Boolean); // Remove null entries
-
-// Apply annotations in batches using set_multiple_annotations
-if (annotationsToApply.length > 0) {
-  await set_multiple_annotations({
-    nodeId: selectedNodeId,
-    annotations: annotationsToApply
-  });
-}
-\`\`\`
-
-
-This strategy focuses on practical implementation based on real-world usage patterns, emphasizing the importance of handling various UI elements as annotation targets, not just text nodes.`
+// Join Channel Tool
+server.tool(
+  "join_channel",
+  "Join a specific channel to communicate with Figma",
+  {
+    channel: z.string().describe("The name of the channel to join").default(""),
+  },
+  async ({ channel }) => {
+    try {
+      if (!channel) {
+        return {
+          content: [
+            { type: "text", text: "Please provide a channel name to join:" },
+          ],
+          followUp: {
+            tool: "join_channel",
+            description: "Join the specified channel",
           },
-        },
-      ],
-      description: "Strategy for converting manual annotations to Figma's native annotations",
-    };
-  }
+        };
+      }
+      await joinChannel(channel);
+      return {
+        content: [
+          { type: "text", text: `Successfully joined channel: ${channel}` },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error joining channel: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  },
 );
 
+// ==================== TYPE DEFINITIONS ====================
 
-// Define command types and parameters
 type FigmaCommand =
   | "get_document_info"
   | "get_selection"
@@ -1918,232 +2274,96 @@ type FigmaCommand =
   | "get_annotations"
   | "set_annotation"
   | "set_multiple_annotations"
-  | "scan_nodes_by_types";
+  | "scan_nodes_by_types"
+  | "set_auto_layout"
+  | "set_effects"
+  | "group_nodes"
+  | "ungroup_nodes"
+  | "flatten_node"
+  | "insert_child"
+  | "set_opacity"
+  | "set_visibility"
+  | "rename_node"
+  | "set_locked"
+  | "get_all_colors"
+  | "get_all_fonts"
+  | "node_exists"
+  | "get_children"
+  | "find_nodes_by_name"
+  | "set_gradient_fill"
+  | "set_text_style"
+  | "set_constraints"
+  | "set_blend_mode"
+  | "create_ellipse"
+  | "create_line"
+  | "get_parent"
+  | "set_selection"
+  | "scroll_into_view";
 
-type CommandParams = {
-  get_document_info: Record<string, never>;
-  get_selection: Record<string, never>;
-  get_node_info: { nodeId: string };
-  get_nodes_info: { nodeIds: string[] };
-  create_rectangle: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    name?: string;
-    parentId?: string;
-  };
-  create_frame: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    name?: string;
-    parentId?: string;
-    fillColor?: { r: number; g: number; b: number; a?: number };
-    strokeColor?: { r: number; g: number; b: number; a?: number };
-    strokeWeight?: number;
-  };
-  create_text: {
-    x: number;
-    y: number;
-    text: string;
-    fontSize?: number;
-    fontWeight?: number;
-    fontColor?: { r: number; g: number; b: number; a?: number };
-    name?: string;
-    parentId?: string;
-  };
-  set_fill_color: {
-    nodeId: string;
-    r: number;
-    g: number;
-    b: number;
-    a?: number;
-  };
-  set_stroke_color: {
-    nodeId: string;
-    r: number;
-    g: number;
-    b: number;
-    a?: number;
-    weight?: number;
-  };
-  move_node: {
-    nodeId: string;
-    x: number;
-    y: number;
-  };
-  resize_node: {
-    nodeId: string;
-    width: number;
-    height: number;
-  };
-  delete_node: {
-    nodeId: string;
-  };
-  delete_multiple_nodes: {
-    nodeIds: string[];
-  };
-  get_styles: Record<string, never>;
-  get_local_components: Record<string, never>;
-  get_team_components: Record<string, never>;
-  create_component_instance: {
-    componentKey: string;
-    x: number;
-    y: number;
-  };
-  export_node_as_image: {
-    nodeId: string;
-    format?: "PNG" | "JPG" | "SVG" | "PDF";
-    scale?: number;
-  };
-  join: {
-    channel: string;
-  };
-  set_corner_radius: {
-    nodeId: string;
-    radius: number;
-    corners?: boolean[];
-  };
-  clone_node: {
-    nodeId: string;
-    x?: number;
-    y?: number;
-  };
-  set_text_content: {
-    nodeId: string;
-    text: string;
-  };
-  scan_text_nodes: {
-    nodeId: string;
-    useChunking: boolean;
-    chunkSize: number;
-  };
-  set_multiple_text_contents: {
-    nodeId: string;
-    text: Array<{ nodeId: string; text: string }>;
-  };
-  get_annotations: {
-    nodeId?: string;
-    includeCategories?: boolean;
-  };
-  set_annotation: {
-    nodeId: string;
-    annotationId?: string;
-    labelMarkdown: string;
-    categoryId?: string;
-    properties?: Array<{ type: string }>;
-  };
-  set_multiple_annotations: SetMultipleAnnotationsParams;
-  scan_nodes_by_types: {
-    nodeId: string;
-    types: Array<string>;
-  };
-};
+// ==================== WEBSOCKET CONNECTION ====================
 
-// Helper function to process Figma node responses
-function processFigmaNodeResponse(result: unknown): any {
-  if (!result || typeof result !== "object") {
-    return result;
-  }
-
-  // Check if this looks like a node response
-  const resultObj = result as Record<string, unknown>;
-  if ("id" in resultObj && typeof resultObj.id === "string") {
-    // It appears to be a node response, log the details
-    console.info(
-      `Processed Figma node: ${resultObj.name || "Unknown"} (ID: ${resultObj.id
-      })`
-    );
-
-    if ("x" in resultObj && "y" in resultObj) {
-      console.debug(`Node position: (${resultObj.x}, ${resultObj.y})`);
-    }
-
-    if ("width" in resultObj && "height" in resultObj) {
-      console.debug(`Node dimensions: ${resultObj.width}×${resultObj.height}`);
-    }
-  }
-
-  return result;
-}
-
-// Update the connectToFigma function
 function connectToFigma(port: number = 3055) {
-  // If already connected, do nothing
   if (ws && ws.readyState === WebSocket.OPEN) {
-    logger.info('Already connected to Figma');
+    logger.info("Already connected to Figma");
     return;
   }
 
-  const wsUrl = serverUrl === 'localhost' ? `${WS_URL}:${port}` : WS_URL;
+  const wsUrl = serverUrl === "localhost" ? `${WS_URL}:${port}` : WS_URL;
   logger.info(`Connecting to Figma socket server at ${wsUrl}...`);
   ws = new WebSocket(wsUrl);
 
-  ws.on('open', () => {
-    logger.info('Connected to Figma socket server');
-    // Reset channel on new connection
+  ws.on("open", () => {
+    logger.info("Connected to Figma socket server");
     currentChannel = null;
+    reconnectAttempts = 0;
   });
 
   ws.on("message", (data: any) => {
     try {
-      // Define a more specific type with an index signature to allow any property access
       interface ProgressMessage {
         message: FigmaResponse | any;
         type?: string;
         id?: string;
-        [key: string]: any; // Allow any other properties
+        [key: string]: any;
       }
 
       const json = JSON.parse(data) as ProgressMessage;
 
-      // Handle progress updates
-      if (json.type === 'progress_update') {
+      if (json.type === "progress_update") {
         const progressData = json.message.data as CommandProgressUpdate;
-        const requestId = json.id || '';
+        const requestId = json.id || "";
 
         if (requestId && pendingRequests.has(requestId)) {
           const request = pendingRequests.get(requestId)!;
-
-          // Update last activity timestamp
           request.lastActivity = Date.now();
-
-          // Reset the timeout to prevent timeouts during long-running operations
           clearTimeout(request.timeout);
-
-          // Create a new timeout
           request.timeout = setTimeout(() => {
             if (pendingRequests.has(requestId)) {
-              logger.error(`Request ${requestId} timed out after extended period of inactivity`);
+              logger.error(
+                `Request ${requestId} timed out after extended period of inactivity`,
+              );
               pendingRequests.delete(requestId);
-              request.reject(new Error('Request to Figma timed out'));
+              request.reject(new Error("Request to Figma timed out"));
             }
-          }, 60000); // 60 second timeout for inactivity
-
-          // Log progress
-          logger.info(`Progress update for ${progressData.commandType}: ${progressData.progress}% - ${progressData.message}`);
-
-          // For completed updates, we could resolve the request early if desired
-          if (progressData.status === 'completed' && progressData.progress === 100) {
-            // Optionally resolve early with partial data
-            // request.resolve(progressData.payload);
-            // pendingRequests.delete(requestId);
-
-            // Instead, just log the completion, wait for final result from Figma
-            logger.info(`Operation ${progressData.commandType} completed, waiting for final result`);
+          }, 60000);
+          logger.info(
+            `Progress update for ${progressData.commandType}: ${progressData.progress}% - ${progressData.message}`,
+          );
+          if (
+            progressData.status === "completed" &&
+            progressData.progress === 100
+          ) {
+            logger.info(
+              `Operation ${progressData.commandType} completed, waiting for final result`,
+            );
           }
         }
         return;
       }
 
-      // Handle regular responses
       const myResponse = json.message;
       logger.debug(`Received message: ${JSON.stringify(myResponse)}`);
-      logger.log('myResponse' + JSON.stringify(myResponse));
 
-      // Handle response to a request
       if (
         myResponse.id &&
         pendingRequests.has(myResponse.id) &&
@@ -2151,7 +2371,6 @@ function connectToFigma(port: number = 3055) {
       ) {
         const request = pendingRequests.get(myResponse.id)!;
         clearTimeout(request.timeout);
-
         if (myResponse.error) {
           logger.error(`Error from Figma: ${myResponse.error}`);
           request.reject(new Error(myResponse.error));
@@ -2160,39 +2379,42 @@ function connectToFigma(port: number = 3055) {
             request.resolve(myResponse.result);
           }
         }
-
         pendingRequests.delete(myResponse.id);
       } else {
-        // Handle broadcast messages or events
-        logger.info(`Received broadcast message: ${JSON.stringify(myResponse)}`);
+        logger.info(
+          `Received broadcast message: ${JSON.stringify(myResponse)}`,
+        );
       }
     } catch (error) {
-      logger.error(`Error parsing message: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(
+        `Error parsing message: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   });
 
-  ws.on('error', (error) => {
+  ws.on("error", (error: Error) => {
     logger.error(`Socket error: ${error}`);
   });
 
-  ws.on('close', () => {
-    logger.info('Disconnected from Figma socket server');
+  ws.on("close", () => {
+    logger.info("Disconnected from Figma socket server");
     ws = null;
 
-    // Reject all pending requests
     for (const [id, request] of pendingRequests.entries()) {
       clearTimeout(request.timeout);
       request.reject(new Error("Connection closed"));
       pendingRequests.delete(id);
     }
 
-    // Attempt to reconnect
-    logger.info('Attempting to reconnect in 2 seconds...');
-    setTimeout(() => connectToFigma(port), 2000);
+    reconnectAttempts++;
+    const delay = getReconnectDelay();
+    logger.info(
+      `Attempting to reconnect in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts})...`,
+    );
+    setTimeout(() => connectToFigma(port), delay);
   });
 }
 
-// Function to join a channel
 async function joinChannel(channelName: string): Promise<void> {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     throw new Error("Not connected to Figma");
@@ -2203,26 +2425,25 @@ async function joinChannel(channelName: string): Promise<void> {
     currentChannel = channelName;
     logger.info(`Joined channel: ${channelName}`);
   } catch (error) {
-    logger.error(`Failed to join channel: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(
+      `Failed to join channel: ${error instanceof Error ? error.message : String(error)}`,
+    );
     throw error;
   }
 }
 
-// Function to send commands to Figma
 function sendCommandToFigma(
   command: FigmaCommand,
   params: unknown = {},
-  timeoutMs: number = 30000
+  timeoutMs: number = 30000,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    // If not connected, try to connect first
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectToFigma();
       reject(new Error("Not connected to Figma. Attempting to connect..."));
       return;
     }
 
-    // Check if we need a channel for this command
     const requiresChannel = command !== "join";
     if (requiresChannel && !currentChannel) {
       reject(new Error("Must join a channel before sending commands"));
@@ -2241,102 +2462,54 @@ function sendCommandToFigma(
         command,
         params: {
           ...(params as any),
-          commandId: id, // Include the command ID in params
+          commandId: id,
         },
       },
     };
 
-    // Set timeout for request
     const timeout = setTimeout(() => {
       if (pendingRequests.has(id)) {
         pendingRequests.delete(id);
-        logger.error(`Request ${id} to Figma timed out after ${timeoutMs / 1000} seconds`);
-        reject(new Error('Request to Figma timed out'));
+        logger.error(
+          `Request ${id} to Figma timed out after ${timeoutMs / 1000} seconds`,
+        );
+        reject(new Error("Request to Figma timed out"));
       }
     }, timeoutMs);
 
-    // Store the promise callbacks to resolve/reject later
     pendingRequests.set(id, {
       resolve,
       reject,
       timeout,
-      lastActivity: Date.now()
+      lastActivity: Date.now(),
     });
 
-    // Send the request
     logger.info(`Sending command to Figma: ${command}`);
     logger.debug(`Request details: ${JSON.stringify(request)}`);
     ws.send(JSON.stringify(request));
   });
 }
 
-// Update the join_channel tool
-server.tool(
-  "join_channel",
-  "Join a specific channel to communicate with Figma",
-  {
-    channel: z.string().describe("The name of the channel to join").default(""),
-  },
-  async ({ channel }) => {
-    try {
-      if (!channel) {
-        // If no channel provided, ask the user for input
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Please provide a channel name to join:",
-            },
-          ],
-          followUp: {
-            tool: "join_channel",
-            description: "Join the specified channel",
-          },
-        };
-      }
+// ==================== SERVER STARTUP ====================
 
-      await joinChannel(channel);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Successfully joined channel: ${channel}`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error joining channel: ${error instanceof Error ? error.message : String(error)
-              }`,
-          },
-        ],
-      };
-    }
-  }
-);
-
-// Start the server
 async function main() {
   try {
-    // Try to connect to Figma socket server
     connectToFigma();
   } catch (error) {
-    logger.warn(`Could not connect to Figma initially: ${error instanceof Error ? error.message : String(error)}`);
-    logger.warn('Will try to connect when the first command is sent');
+    logger.warn(
+      `Could not connect to Figma initially: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    logger.warn("Will try to connect when the first command is sent");
   }
 
-  // Start the MCP server with stdio transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info('FigmaMCP server running on stdio');
+  logger.info("FigmaMCP server running on stdio");
 }
 
-// Run the server
-main().catch(error => {
-  logger.error(`Error starting FigmaMCP server: ${error instanceof Error ? error.message : String(error)}`);
+main().catch((error) => {
+  logger.error(
+    `Error starting FigmaMCP server: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 });
-

@@ -1,28 +1,30 @@
 {
-  "name": "cursor-talk-to-figma-mcp",
-  "description": "Cursor Talk to Figma MCP",
-  "version": "0.1.8",
+  "name": "talk-to-figma-mcp",
+  "description": "Talk to Figma MCP - AI-powered Figma integration for Cursor, Claude, and other MCP-compatible editors",
+  "version": "1.0.0",
   "module": "dist/server.js",
   "main": "dist/server.js",
   "bin": {
-    "cursor-talk-to-figma-mcp": "dist/server.js"
+    "talk-to-figma-mcp": "dist/cli.js"
   },
   "files": [
     "dist",
+    "src/cursor_mcp_plugin",
     "README.md"
   ],
   "type": "module",
   "scripts": {
-    "start": "bun run dist/server.js",
-    "socket": "bun run src/socket.ts",
+    "start": "node dist/cli.js",
+    "socket": "node dist/cli.js --socket",
     "setup": "./scripts/setup.sh",
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "dev": "bun run build:watch",
+    "dev": "bun run src/socket.ts",
     "pub:release": "bun run build && npm publish"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/ws": "^8.5.10",
     "bun-types": "^1.2.5",
     "tsup": "^8.4.0",
     "typescript": "^5.0.0"
@@ -30,7 +32,22 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
     "uuid": "latest",
-    "ws": "latest",
+    "ws": "^8.16.0",
     "zod": "latest"
-  }
+  },
+  "keywords": [
+    "figma",
+    "mcp",
+    "cursor",
+    "claude",
+    "ai",
+    "design",
+    "automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thanatusdev/talk-to-figma-mcp"
+  },
+  "license": "MIT",
+  "author": "John Amorim (Thanatusdev)"
 }
