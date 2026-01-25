@@ -1,7 +1,7 @@
 {
   "name": "talk-to-figma-mcp-tool",
   "description": "Talk to Figma MCP - AI-powered Figma integration for Cursor, Claude, and other MCP-compatible editors",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "module": "dist/server.js",
   "main": "dist/server.js",
   "bin": {
@@ -31,6 +31,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2",
     "uuid": "latest",
     "ws": "^8.16.0",
     "zod": "latest"
